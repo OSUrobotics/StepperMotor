@@ -349,6 +349,7 @@ class StepperMotor:
         print("No motor to kill")
         return
     os.kill(self.__child_pid, signal.SIGTERM)
+    self.__child_pid = -5
 
   def run_motor(self, direction, speed = None):
     if not(self.__child_pid == -5):
