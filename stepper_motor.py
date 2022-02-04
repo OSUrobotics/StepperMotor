@@ -391,7 +391,7 @@ class StepperMotor:
             sleep(speed)
             self.__current_steps += inc # need to update this using a pipe or queue with the parent process
     else:
-        # parent process
-        pass
+        # parent process, wait no hang for child process so it becomes a zombie. (child should never return anyways)
+        os.waitpid(self.__child_pid, os.WNOHANG)
 
   
