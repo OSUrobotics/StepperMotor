@@ -341,20 +341,25 @@ class StepperMotor:
       print("Unknown error during disabling motor")
     
 
+  # invoking any other motor control functions with these is currently undefined
+
   def stop_motor(self):
     # kills motor process using SIGTERM UNIX signal. 
-    # Catchable so can update inc on cleanup using signal.signal() in child
+    # Catchable so can update inc on cleanup using a registered signal handler.
+    # Can register signal handlers with signal.signal(...).
     # use ps to see if child exited
     if self.__child_pid == -5:
         print("No motor to kill")
         return
     os.kill(self.__child_pid, signal.SIGTERM)
     self.__child_pid = -5
+    gpio.output(self.en_pin, gpio.LOW)
 
   def run_motor(self, direction, speed = None):
+    # runs motor indefinitely
     if not(self.__child_pid == -5):
         # A child process has already been spawned
-        raise Exception("Child process already running. Call stop() to terminate all child processes")
+        raise Exception("Child process already running. Call stop_motor() to terminate all child processes")
     if(speed == None):
         speed = self.default_speed
     try:
