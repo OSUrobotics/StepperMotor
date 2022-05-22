@@ -2,12 +2,9 @@
 from time import time, sleep
 import RPi.GPIO as gpio
 import numpy as np
-import os, signal
+import os, signal, threading, ctypes
 
 # Author: Ryan Roberts
-#
-#TODO:
-# add resolution parameter (pulse/rev) to do movements given angles
 
 class StepperMotor:
   """
@@ -99,6 +96,8 @@ class StepperMotor:
     self.__current_steps = 0
     # added. child PID retrieved from fork(). When no child process is running, value is -5
     self.__child_pid = -5
+    # for multithreading attempt:
+    self._thread_instance = MotorControlThread("MC thread")
   
   def move_for(self, run_time, direction, speed = None):
     """
@@ -336,9 +335,9 @@ class StepperMotor:
     try:
       gpio.output(self.en_pin, gpio.LOW)
     except Exception as e:
-      print("Motor pins not configured properly. Error: {}".format(e))
+      raise Exception("Motor pins not configured properly. Error: {}".format(e))
     except:
-      print("Unknown error during disabling motor")
+      raise Exception("Unknown error during disabling motor")
     
 
   # invoking any other motor control functions with these is currently undefined
@@ -383,7 +382,7 @@ class StepperMotor:
         speed = self.default_speed
     self.__child_pid = os.fork()
     if self.__child_pid == 0:
-        # child process, run motor indefinetely
+        # child process, run motor indefinitely
         while True:
             gpio.output(self.pulse_pin, gpio.HIGH)
             sleep(speed)
@@ -393,5 +392,79 @@ class StepperMotor:
     else:
         # parent process, wait no hang for child process so it becomes a zombie. (child should never return anyways)
         os.waitpid(self.__child_pid, os.WNOHANG)
+  
+
+  # multithreading test functions:
+
+  def stop_motor_th(self):
+    # kills motor process by having thread raise an exception, stopping the run() method
+    if not self._thread_instance.is_alive():
+        raise Exception("No motor to kill")
+    self._thread_instance.raise_exception()
+    self._thread_instance.join() # block until thread has fully stopped
+    gpio.output(self.en_pin, gpio.LOW)
+
+  def run_motor_th(self, direction, speed = None):
+    # runs motor indefinitely
+    if (self._thread_instance.is_alive()):
+        # A thread has already been created and is still running
+        raise Exception("Child process already running. Call stop_motor_th() to terminate all child processes")
+    if(speed == None):
+        speed = self.default_speed
+    try:
+        gpio.output(self.dir_pin, direction)
+        gpio.output(self.en_pin, gpio.HIGH)
+    except Exception as e:
+        raise Exception("Motor pins not configured properly. Error: {}".format(e))
+    except:
+        raise Exception("Unknown error during controlling motor pins")
+    inc = 0
+    if(direction==self.CW):
+        inc = 1
+    elif(direction==self.CCW):
+        inc = -1
+    else:
+        raise Exception("Invalid direction. Direction does not match CW or CCW direction of motor")
+    if(speed == None):
+        speed = self.default_speed
+    # start thread
+    self._thread_instance.start()
 
   
+
+# multithreading Object
+class MotorControlThread(threading.Thread):
+  def __init__(self, name):
+    threading.Thread.__init__(self)
+    self.name = name
+
+  def run(self):
+    # main function that thread runs
+    try:
+      while True:
+        # run motor indefinitely
+        gpio.output(self.pulse_pin, gpio.HIGH)
+        sleep(speed)
+        gpio.output(self.pulse_pin, gpio.LOW)
+        sleep(speed)
+        # start critical section
+        #self.__current_steps += inc
+        # end critical section
+    finally:
+      # for testing purposes only
+      print("thread {} ended".format(self.get_id()))
+
+  def get_id(self):
+    # returns id of the respective thread
+    if hasattr(self, '_thread_id'):
+        return self._thread_id
+    for id, thread in threading._active.items():
+        if thread is self:
+            return id
+
+  # used to stop thread w/o flag communication
+  def raise_exception(self):
+    thread_id = self.get_id()
+    res = ctypes.pythonapi.PyThreadState_SetAsyncExc(thread_id, ctypes.py_object(SystemExit))
+    if res > 1:
+        ctypes.pythonapi.PyThreadState_SetAsyncExc(thread_id, 0)
