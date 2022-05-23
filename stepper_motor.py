@@ -115,12 +115,9 @@ class StepperMotor:
     -------
     None
     """
-    try:
-      gpio.output(self.dir_pin, direction)
-      gpio.output(self.en_pin, gpio.HIGH)
-    except Exception as e:
-      raise Exception("Motor pins not configured properly. Error: {}".format(e))
     timer = time() + run_time
+    if(speed == None):
+      speed = self.default_speed
     self.start_motor(speed)
     while(time() <= timer):
       continue
