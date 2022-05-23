@@ -5,6 +5,8 @@ import numpy as np
 import os, signal, threading, ctypes
 
 # Author: Ryan Roberts
+# Email : roberyan@oregonstate.edu
+# Date  : 5/2022
 
 class StepperMotor:
   """
@@ -27,25 +29,29 @@ class StepperMotor:
     GPIO pin number for enable pin of stepper motor controller
   default_speed : float
     delay between pulses in seconds / 2 (default .000001)
-  current_steps : int
-    step count of stepper motor relative to its zero position
   
   Methods
   -------
   move_for(run_time, direction, speed = None):
     moves motor in a single direction for a given time
+
   step(num_steps, direction, speed = None):
     steps motor in a single direction for a given amount of steps
-  step_to(step_target, speed = None):
-    steps motor to a specific step relative to its zero positon
-  get_current_steps():
-    returns current step position of motor
-  override_position(step_value):
-    overrides the current step value of motor.
+
   override_enable():
     force enable motor
+
   override_disable():
     force disables motor
+
+  stop_motor():
+    stops motor
+  
+  start_motor():
+    starts motor in a given direction indefinitely
+
+  is_running():
+    returns True if motor is running, False otherwise
   """
   
   CCW = 1
@@ -74,36 +80,26 @@ class StepperMotor:
       self.dir_pin = int(dir_pin)
       self.en_pin = int(en_pin)
     except ValueError:
-      print("Invalid pin values")
-      return
+      raise ValueError("Invalid pin values")
     except Exception as e:
-      print(e)
-      return
-    except:
-      print("Unknown error during pin assignments")
-      return
+      raise Exception(e)
     try:
       self.default_speed = float(default_speed)
     except ValueError:
-      print("Invalid speed value")
-      return
+      raise ValueError("Invalid speed value")
     except Exception as e:
-      print(e)
-      return
-    except:
-      print("Unknown error during speed assignment")
-      return
-    self.__current_steps = 0
-    # added. child PID retrieved from fork(). When no child process is running, value is -5
+      raise Exception(e)
+
+    # child PID retrieved from fork().
+    # When no child process is running, value is -5
     self.__child_pid = -5
-    # for multithreading attempt:
-    self._thread_instance = MotorControlThread("MC thread")
   
   def move_for(self, run_time, direction, speed = None):
     """
-    Moves motor in a single direction for a given time.
-    Note: number of steps made by motor may vary using this method.
-    Do not use for precise movements
+    Blocking. Moves motor in a single direction for a given time.
+    
+    Note: Number of steps made by motor may vary using this method.
+          Do not use for precise movements.
     
     Parameters
     ----------
@@ -119,48 +115,20 @@ class StepperMotor:
     -------
     None
     """
-    
-    if(speed == None):
-      speed = self.default_speed
     try:
       gpio.output(self.dir_pin, direction)
       gpio.output(self.en_pin, gpio.HIGH)
     except Exception as e:
-      print("Motor pins not configured properly. Error: {}".format(e))
-      return
-    except:
-      print("Unknown error during controlling motor pins")
-      return
-    inc = 0
-    if(direction==self.CW):
-      inc = 1
-    elif(direction==self.CCW):
-      inc = -1
-    else:
-      raise Exception("Invalid direction. Direction does not match CW or CCW direction of motor")
-      return
+      raise Exception("Motor pins not configured properly. Error: {}".format(e))
     timer = time() + run_time
-    try:
-      while(time() <= timer):
-        gpio.output(self.pulse_pin, gpio.HIGH)
-        sleep(speed)
-        gpio.output(self.pulse_pin, gpio.LOW)
-        sleep(speed)
-        self.__current_steps += inc
-      gpio.output(self.en_pin, gpio.LOW)
-    except ValueError:
-      print("Invalid speed value")
-      return
-    except Exception as e:
-      print(e)
-      return
-    except:
-      print("Unknown error during motor stepping")
-      return
+    self.start_motor(speed)
+    while(time() <= timer):
+      continue
+    self.stop_motor()
   
   def step(self, num_steps, direction, speed = None):
     """
-    Steps motor in a single direction for a given amount of steps
+    Blocking. Steps motor in a single direction for a given amount of steps
     
     Parameters
     ----------
@@ -176,125 +144,30 @@ class StepperMotor:
     -------
     None
     """
-    
+    if self.is_running():
+        # A child process has already been spawned
+        raise Exception("Motor already running. Call stop_motor() first")
     if(speed == None):
-      speed = self.default_speed
+        speed = self.default_speed
     try:
-      gpio.output(self.dir_pin, direction)
-      gpio.output(self.en_pin, gpio.HIGH)
+        gpio.output(self.dir_pin, direction)
+        gpio.output(self.en_pin, gpio.HIGH)
     except Exception as e:
-      print("Motor pins not configured properly. Error: {}".format(e))
-      return
-    except:
-      print("Unknown error during controlling motor pins")
-      return
-    try:
-      if(direction==self.CW):
-        self.__current_steps += int(num_steps)
-      elif(direction==self.CCW):
-        self.__current_steps -= int(num_steps)
-      else:
-        raise Exception("Invalid direction. Direction does not match CW or CCW direction of motor")
-        return
-    except ValueError:
-      print("invalid num_steps assignment")
-      return
-    except Exception as e:
-      print(e)
-      return
-    except:
-      print("Unknown error during adding num_steps to current steps of motor")
-      return  
-    try:
-      for steps in range(int(num_steps)):
-        gpio.output(self.pulse_pin, gpio.HIGH)
-        sleep(speed)
-        gpio.output(self.pulse_pin, gpio.LOW)
-        sleep(speed)
-      gpio.output(self.en_pin, gpio.LOW)
-    except ValueError:
-      print("Invalid speed value")
-      return
-    except Exception as e:
-      print(e)
-      return
-    except:
-      print("Unknown error during motor stepping")
-      return   
-    
-  def step_to(self, step_target, speed = None):
-    """
-    Steps motor to a specific step relative to its zero positon
-    
-    Parameters
-    ----------
-    step_target : int
-      target step position to move motor to
-    speed : float, optional
-      delay between pulses in seconds / 2 (default default_speed)
-      
-    Returns
-    -------
-    None
-    """
-    
-    if(speed == None):
-      speed = self.default_speed
-    try:
-      num_steps = int(step_target) - self.__current_steps
-      if(num_steps >= 0):
-        self.step(abs(num_steps), self.CW, speed)
-      else:
-        self.step(abs(num_steps), self.CCW, speed)
-      self.__current_steps = step_target
-    except ValueError:
-      print("Invalid step target")
-      return
-    except Exception as e:
-      print(e)
-      return
-    except:
-      print("Unknown error")
-      return
-  
-  def get_current_steps(self):
-    """
-    Returns current step position of motor.
-    Negative steps = CCW direction
-    Positive steps = CW direction
-    
-    Parameters
-    ----------
-    None
-      
-    Returns
-    -------
-    int
-    """
-    
-    return self.__current_steps
-  
-  def override_position(self, step_value):
-    """
-    overides the current step value of motor.
-    NOTE: motor does not move to new step value. Use
-    the step_to() method to move motor to a absolute step
-    position.
-    
-    Parameters
-    ----------
-    step_value : int
-      new value of the current step position of motor
-      
-    Returns
-    -------
-    None
-    """
-    
-    try:
-      self.__current_steps = int(step_value)
-    except ValueError:
-      print("Invalid new step position")
+        raise Exception("Motor pins not configured properly. Error: {}".format(e))
+    self.__child_pid = os.fork()
+    if self.__child_pid == 0:
+        # child process, step motor num_steps times
+        for steps in range(int(num_steps)):
+          gpio.output(self.pulse_pin, gpio.HIGH)
+          sleep(speed)
+          gpio.output(self.pulse_pin, gpio.LOW)
+          sleep(speed)
+        exit()
+    else:
+        # parent process, wait for child process to finish
+        return_status = os.waitpid(self.__child_pid)
+        if not os.WIFEXITED(return_status):
+          raise Exception("Failed to step motor for entire amount. Stop Signal: {}".format(os.WSTOPSIG(return_status))) 
 
   def override_enable(self):
     """
@@ -313,9 +186,7 @@ class StepperMotor:
     try:
       gpio.output(self.en_pin, gpio.HIGH)
     except Exception as e:
-      print("Motor pins not configured properly. Error: {}".format(e))
-    except:
-      print("Unknown error during enabling motor")
+      raise Exception("Motor pins not configured properly. Error: {}".format(e))
     
   def override_disable(self):
     """
@@ -336,135 +207,142 @@ class StepperMotor:
       gpio.output(self.en_pin, gpio.LOW)
     except Exception as e:
       raise Exception("Motor pins not configured properly. Error: {}".format(e))
-    except:
-      raise Exception("Unknown error during disabling motor")
-    
 
-  # invoking any other motor control functions with these is currently undefined
+  def is_running(self):
+    """
+    returns True if motor is running, False otherwise
+    """
+    return False if self.__child_pid == -5 else True
 
   def stop_motor(self):
-    # kills motor process using SIGTERM UNIX signal. 
-    # Catchable so can update inc on cleanup using a registered signal handler.
-    # Can register signal handlers with signal.signal(...).
+    """
+    Stops motor. Raises Exception if no motor is currently running
+    
+    Parameters
+    ----------
+    NONE
+      
+    Returns
+    -------
+    None
+    """
+    # kills motor process using SIGTERM UNIX signal.
     # use ps to see if child exited
-    if self.__child_pid == -5:
-        print("No motor to kill")
-        return
+    if not self.is_running():
+      raise Exception("No motor to kill")
     os.kill(self.__child_pid, signal.SIGTERM)
     self.__child_pid = -5
     gpio.output(self.en_pin, gpio.LOW)
 
-  def run_motor(self, direction, speed = None):
-    # runs motor indefinitely
-    if not(self.__child_pid == -5):
+  def start_motor(self, direction, speed = None):
+    """
+    Starts motor in a given direction indefinitely. Non-blocking. 
+    Raises Exception if motor is currently running. Call stop_motor() to stop the motor
+    
+    Parameters
+    ----------
+    NONE
+      
+    Returns
+    -------
+    None
+    """
+    # runs motor indefinitely. Non-blocking
+    if self.is_running():
         # A child process has already been spawned
-        raise Exception("Child process already running. Call stop_motor() to terminate all child processes")
+        raise Exception("Motor already running. Call stop_motor() first")
     if(speed == None):
-        speed = self.default_speed
+      speed = self.default_speed
     try:
-        gpio.output(self.dir_pin, direction)
-        gpio.output(self.en_pin, gpio.HIGH)
+      gpio.output(self.dir_pin, direction)
+      gpio.output(self.en_pin, gpio.HIGH)
     except Exception as e:
-        print("Motor pins not configured properly. Error: {}".format(e))
-        return
-    except:
-        print("Unknown error during controlling motor pins")
-        return
-    inc = 0
-    if(direction==self.CW):
-        inc = 1
-    elif(direction==self.CCW):
-        inc = -1
-    else:
-        raise Exception("Invalid direction. Direction does not match CW or CCW direction of motor")
-        return
-    if(speed == None):
-        speed = self.default_speed
+      raise Exception("Motor pins not configured properly. Error: {}".format(e))
     self.__child_pid = os.fork()
     if self.__child_pid == 0:
         # child process, run motor indefinitely
-        while True:
-            gpio.output(self.pulse_pin, gpio.HIGH)
-            sleep(speed)
-            gpio.output(self.pulse_pin, gpio.LOW)
-            sleep(speed)
-            self.__current_steps += inc # need to update this using a pipe or queue with the parent process
-    else:
-        # parent process, wait no hang for child process so it becomes a zombie. (child should never return anyways)
-        os.waitpid(self.__child_pid, os.WNOHANG)
-  
-
-  # multithreading test functions:
-
-  def stop_motor_th(self):
-    # kills motor process by having thread raise an exception, stopping the run() method
-    if not self._thread_instance.is_alive():
-        raise Exception("No motor to kill")
-    self._thread_instance.raise_exception()
-    self._thread_instance.join() # block until thread has fully stopped
-    gpio.output(self.en_pin, gpio.LOW)
-
-  def run_motor_th(self, direction, speed = None):
-    # runs motor indefinitely
-    if (self._thread_instance.is_alive()):
-        # A thread has already been created and is still running
-        raise Exception("Child process already running. Call stop_motor_th() to terminate all child processes")
-    if(speed == None):
-        speed = self.default_speed
-    try:
-        gpio.output(self.dir_pin, direction)
-        gpio.output(self.en_pin, gpio.HIGH)
-    except Exception as e:
-        raise Exception("Motor pins not configured properly. Error: {}".format(e))
-    except:
-        raise Exception("Unknown error during controlling motor pins")
-    inc = 0
-    if(direction==self.CW):
-        inc = 1
-    elif(direction==self.CCW):
-        inc = -1
-    else:
-        raise Exception("Invalid direction. Direction does not match CW or CCW direction of motor")
-    if(speed == None):
-        speed = self.default_speed
-    # start thread
-    self._thread_instance.start()
-
-  
-
-# multithreading Object
-class MotorControlThread(threading.Thread):
-  def __init__(self, name):
-    threading.Thread.__init__(self)
-    self.name = name
-
-  def run(self):
-    # main function that thread runs
-    try:
       while True:
-        # run motor indefinitely
         gpio.output(self.pulse_pin, gpio.HIGH)
         sleep(speed)
         gpio.output(self.pulse_pin, gpio.LOW)
         sleep(speed)
-        # start critical section
-        #self.__current_steps += inc
-        # end critical section
-    finally:
-      # for testing purposes only
-      print("thread {} ended".format(self.get_id()))
+    else:
+      # parent process, wait no hang for child process so it becomes a zombie. 
+      # (child should never return anyways)
+      os.waitpid(self.__child_pid, os.WNOHANG)
+  
 
-  def get_id(self):
-    # returns id of the respective thread
-    if hasattr(self, '_thread_id'):
-        return self._thread_id
-    for id, thread in threading._active.items():
-        if thread is self:
-            return id
+#   # multithreading test functions:
 
-  # used to stop thread w/o flag communication
-  def raise_exception(self):
-    thread_id = self.get_id()
-    res = ctypes.pythonapi.PyThreadState_SetAsyncExc(thread_id, ctypes.py_object(SystemExit))
-    if res > 1:
-        ctypes.pythonapi.PyThreadState_SetAsyncExc(thread_id, 0)
+#   def stop_motor_th(self):
+#     # kills motor process by having thread raise an exception, stopping the run() method
+#     if not self._thread_instance.is_alive():
+#         raise Exception("No motor to kill")
+#     self._thread_instance.raise_exception()
+#     self._thread_instance.join() # block until thread has fully stopped
+#     gpio.output(self.en_pin, gpio.LOW)
+
+#   def run_motor_th(self, direction, speed = None):
+#     # runs motor indefinitely
+#     if (self._thread_instance.is_alive()):
+#         # A thread has already been created and is still running
+#         raise Exception("Child process already running. Call stop_motor_th() to terminate all child processes")
+#     if(speed == None):
+#         speed = self.default_speed
+#     try:
+#         gpio.output(self.dir_pin, direction)
+#         gpio.output(self.en_pin, gpio.HIGH)
+#     except Exception as e:
+#         raise Exception("Motor pins not configured properly. Error: {}".format(e))
+#     except:
+#         raise Exception("Unknown error during controlling motor pins")
+#     inc = 0
+#     if(direction==self.CW):
+#         inc = 1
+#     elif(direction==self.CCW):
+#         inc = -1
+#     else:
+#         raise Exception("Invalid direction. Direction does not match CW or CCW direction of motor")
+#     if(speed == None):
+#         speed = self.default_speed
+#     # start thread
+#     self._thread_instance.start()
+
+  
+
+# # multithreading Object
+# class MotorControlThread(threading.Thread):
+#   def __init__(self, name):
+#     threading.Thread.__init__(self)
+#     self.name = name
+
+#   def run(self):
+#     # main function that thread runs
+#     try:
+#       while True:
+#         # run motor indefinitely
+#         gpio.output(self.pulse_pin, gpio.HIGH)
+#         sleep(speed)
+#         gpio.output(self.pulse_pin, gpio.LOW)
+#         sleep(speed)
+#         # start critical section
+#         #self.__current_steps += inc
+#         # end critical section
+#     finally:
+#       # for testing purposes only
+#       print("thread {} ended".format(self.get_id()))
+
+#   def get_id(self):
+#     # returns id of the respective thread
+#     if hasattr(self, '_thread_id'):
+#         return self._thread_id
+#     for id, thread in threading._active.items():
+#         if thread is self:
+#             return id
+
+#   # used to stop thread w/o flag communication
+#   def raise_exception(self):
+#     thread_id = self.get_id()
+#     res = ctypes.pythonapi.PyThreadState_SetAsyncExc(thread_id, ctypes.py_object(SystemExit))
+#     if res > 1:
+#         ctypes.pythonapi.PyThreadState_SetAsyncExc(thread_id, 0)
