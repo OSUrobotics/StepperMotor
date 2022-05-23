@@ -116,9 +116,7 @@ class StepperMotor:
     None
     """
     timer = time() + run_time
-    if(speed == None):
-      speed = self.default_speed
-    self.start_motor(speed)
+    self.start_motor(direction, speed)
     while(time() <= timer):
       continue
     self.stop_motor()
